@@ -11,6 +11,7 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 import png
+from PIL import Image
 
 import pico8_decoder
 
@@ -273,13 +274,33 @@ def check_mouse_usage(cart_path: Path) -> bool:
     return False
 
 
+def create_anbernic_files(cart_path: Path, output_dir: Path) -> None:
+    base_name = cart_path.stem.replace(".p8", "")
+    p8_path = output_dir / f"{base_name}.p8"
+    img_path = output_dir / "Imgs" / f"{base_name}.png"
+
+    with open(cart_path, "rb") as f:
+        data = f.read()
+
+    with open(p8_path, "wb") as f:
+        f.write(data)
+
+    with Image.open(cart_path) as img:
+        cropped = img.crop((16, 24, 16 + 128, 24 + 128))
+        upscaled = cropped.resize((256, 256), Image.NEAREST)
+        upscaled.save(img_path, "PNG")
+
+
 def download_carts(
     output_dir: Path,
     filter_type: str = "featured",
     exclude_mouse: bool = False,
     max_pages: int | None = None,
+    anbernic: bool = False,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
+    if anbernic:
+        (output_dir / "Imgs").mkdir(parents=True, exist_ok=True)
 
     existing_files = set()
     for f in output_dir.glob("*.p8.png"):
@@ -367,6 +388,9 @@ def download_carts(
                     total_mouse_skipped += 1
                     continue
 
+            if anbernic:
+                create_anbernic_files(cart_path, output_dir)
+
             existing_files.add(sanitized_name)
             total_downloaded += 1
             logger.info(f"Downloaded: {sanitized_name}")
@@ -397,6 +421,11 @@ def main():
         "--exclude-mouse", action="store_true", help="Skip mouse-only games"
     )
     parser.add_argument(
+        "--anbernic",
+        action="store_true",
+        help="Store in Anbernic layout (roms/ + Imgs/)",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("./roms"),
@@ -412,7 +441,7 @@ def main():
     args = parser.parse_args()
 
     logger.info(
-        f"Starting download with filter={args.filter}, exclude_mouse={args.exclude_mouse}, output_dir={args.output_dir}"
+        f"Starting download with filter={args.filter}, exclude_mouse={args.exclude_mouse}, anbernic={args.anbernic}, output_dir={args.output_dir}"
     )
 
     download_carts(
@@ -420,6 +449,7 @@ def main():
         filter_type=args.filter,
         exclude_mouse=args.exclude_mouse,
         max_pages=args.max_pages,
+        anbernic=args.anbernic,
     )
 
 
