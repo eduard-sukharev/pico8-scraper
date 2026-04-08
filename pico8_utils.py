@@ -9,9 +9,17 @@ def check_mouse_usage(cart_path: Path) -> bool:
         return False
 
     lua_code_lower = lua_code.lower()
-    for stat_num in range(30, 40):
+
+    has_mouse = False
+    for stat_num in range(30, 34):
         stat_str = f"stat({stat_num})"
         if stat_str in lua_code_lower:
-            return True
+            has_mouse = True
+            break
 
-    return False
+    if not has_mouse:
+        return False
+
+    has_dpad = "btn(" in lua_code_lower or "btnp(" in lua_code_lower
+
+    return not has_dpad
