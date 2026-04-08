@@ -5,7 +5,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from download_carts import check_mouse_usage, extract_lua_code, sanitize_filename
+from download_carts import sanitize_filename
+from pico8_utils import check_mouse_usage
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -53,18 +54,10 @@ def convert_to_anbernic(
         sanitized = sanitize_filename(title)
 
         if exclude_mouse:
-            lua_code = extract_lua_code(cart_path)
-            if lua_code:
-                lua_lower = lua_code.lower()
-                has_mouse = False
-                for stat_num in range(30, 40):
-                    if f"stat({stat_num})" in lua_lower:
-                        has_mouse = True
-                        break
-                if has_mouse:
-                    logger.info(f"Skipping (mouse): {sanitized}")
-                    skipped_mouse += 1
-                    continue
+            if check_mouse_usage(cart_path):
+                logger.info(f"Skipping (mouse): {sanitized}")
+                skipped_mouse += 1
+                continue
 
         create_anbernic_files(cart_path, output_dir)
         logger.info(f"Converted: {sanitized}")

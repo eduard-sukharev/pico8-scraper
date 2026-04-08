@@ -14,6 +14,7 @@ import png
 from PIL import Image
 
 import pico8_decoder
+from pico8_utils import check_mouse_usage
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -258,20 +259,6 @@ def parse_listing_page(html: str) -> tuple[list[dict], int | None]:
                     next_page = candidate
 
     return carts, next_page
-
-
-def check_mouse_usage(cart_path: Path) -> bool:
-    lua_code = extract_lua_code(cart_path)
-    if not lua_code:
-        return False
-
-    lua_code_lower = lua_code.lower()
-    for stat_num in range(30, 40):
-        stat_str = f"stat({stat_num})"
-        if stat_str in lua_code_lower:
-            return True
-
-    return False
 
 
 def create_anbernic_files(cart_path: Path, output_dir: Path) -> None:
