@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 import argparse
+import io
 import os
 import re
+import struct
 import time
 import logging
 from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image
-from PIL.PngImagePlugin import PngInfo
+import png
+
+import pico8_decoder
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -26,6 +29,155 @@ CART_DOWNLOAD_TEMPLATE = BASE_URL + "/bbs/cposts/{folder}/{pid}.p8.png"
 REQUEST_DELAY = 1.5
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2
+
+CODE_OFFSET = 0x4300
+CODE_END = 0x8000
+
+
+def extract_hidden_data(cart_path: Path) -> bytes | None:
+    try:
+        with open(cart_path, "rb") as f:
+            reader = png.Reader(file=f)
+            width, height, rows, info = reader.read()
+            if width != 160 or height != 205:
+                return None
+            rows = list(rows)
+            hidden = bytearray()
+            for row in rows:
+                for col in range(width):
+                    idx = col * 4
+                    r = row[idx + 0] & 3
+                    g = row[idx + 1] & 3
+                    b = row[idx + 2] & 3
+                    a = row[idx + 3] & 3
+                    byte_val = (a << 6) | (r << 4) | (g << 2) | b
+                    hidden.append(byte_val)
+            return bytes(hidden)
+    except Exception as e:
+        logger.debug(f"Could not extract hidden data from {cart_path}: {e}")
+        return None
+
+
+def decompress_lua_new(data: bytes, decompressed_len: int) -> str:
+    result = []
+    mtf = list(range(256))
+
+    stream = []
+    for b in data:
+        stream.append(format(b, "08b")[::-1])
+    stream_str = "".join(stream)
+    stream_pos = 0
+
+    def read_bit():
+        nonlocal stream_pos
+        if stream_pos >= len(stream_str):
+            return None
+        bit = stream_str[stream_pos]
+        stream_pos += 1
+        return bit
+
+    def read_bits(n):
+        nonlocal stream_pos
+        if stream_pos + n > len(stream_str):
+            return None
+        inv_bits = stream_str[stream_pos : stream_pos + n][::-1]
+        stream_pos += n
+        return inv_bits
+
+    while len(result) < decompressed_len:
+        if stream_pos >= len(stream_str):
+            break
+        header = read_bit()
+        if header is None:
+            break
+        if header == "1":
+            unary = 0
+            while read_bit() == "1":
+                unary += 1
+            unary_mask = (1 << unary) - 1
+            bin_str = read_bits(4 + unary)
+            if bin_str is None:
+                break
+            index = int(bin_str, 2) + (unary_mask << 4)
+            if index >= len(mtf):
+                break
+            byte = mtf[index]
+            result.append(chr(byte))
+            mtf.pop(index)
+            mtf.insert(0, byte)
+        else:
+            b1 = read_bit()
+            b2 = read_bit()
+            if b1 == "1" and b2 == "1":
+                offset_bits = 5
+            elif b1 == "1" and b2 == "0":
+                offset_bits = 10
+            else:
+                offset_bits = 15
+
+            if offset_bits is None:
+                break
+
+            offset_bits_str = read_bits(offset_bits)
+            if offset_bits_str is None:
+                break
+            offset = int(offset_bits_str, 2) + 1
+            if offset_bits == 10 and offset == 1:
+                while True:
+                    b = read_bits(8)
+                    if b is None or b == "00000000":
+                        break
+                    result.append(chr(int(b, 2)))
+                    if len(result) >= decompressed_len:
+                        break
+            else:
+                length = 3
+                while True:
+                    part_str = read_bits(3)
+                    if part_str is None:
+                        break
+                    part = int(part_str, 2)
+                    length += part
+                    if part != 7:
+                        break
+                for _ in range(length):
+                    if offset > len(result):
+                        break
+                    result.append(result[-offset])
+
+    return "".join(result)
+
+
+def decompress_lua_old(data: bytes, decompressed_len: int) -> str:
+    lookup = "\n 0123456789abcdefghijklmnopqrstuvwxyz!#%(){}[]<>+=/*:;.,~_"
+    result = bytearray()
+    idx = 0
+    while len(result) < decompressed_len and idx < len(data):
+        v = data[idx]
+        idx += 1
+        if v == 0x00:
+            if idx < len(data):
+                result.append(data[idx])
+                idx += 1
+        elif v <= 0x3B:
+            result.append(lookup[v].encode("latin-1")[0])
+        elif idx < len(data):
+            next_v = data[idx]
+            idx += 1
+            offset = (v - 0x3C) * 16 + (next_v & 0xF)
+            length = (next_v >> 4) + 2
+            if offset <= len(result):
+                for _ in range(length):
+                    result.append(result[-offset])
+    return bytes(result).decode("latin-1", errors="replace")
+
+
+def extract_lua_code(cart_path: Path) -> str | None:
+    try:
+        return pico8_decoder.extract_code(str(cart_path))
+    except Exception as e:
+        logger.debug(f"Could not extract Lua code from {cart_path}: {e}")
+    return None
 
 
 def sanitize_filename(name: str) -> str:
@@ -108,17 +260,16 @@ def parse_listing_page(html: str) -> tuple[list[dict], int | None]:
 
 
 def check_mouse_usage(cart_path: Path) -> bool:
-    try:
-        with open(cart_path, "rb") as f:
-            data = f.read().lower()
-        for stat_num in range(30, 40):
-            if (
-                f"stat({stat_num})".encode() in data
-                or f"stat {stat_num}".encode() in data
-            ):
-                return True
-    except Exception as e:
-        logger.debug(f"Could not check mouse usage for {cart_path}: {e}")
+    lua_code = extract_lua_code(cart_path)
+    if not lua_code:
+        return False
+
+    lua_code_lower = lua_code.lower()
+    for stat_num in range(30, 40):
+        stat_str = f"stat({stat_num})"
+        if stat_str in lua_code_lower:
+            return True
+
     return False
 
 

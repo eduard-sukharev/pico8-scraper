@@ -1,0 +1,43 @@
+PICO-8 Manual (v0.2.7)
+========================
+
+This file is a local copy of the PICO-8 manual for reference.
+
+See: https://www.lexaloffle.com/dl/docs/pico-8_manual.html
+
+For full documentation, please visit the official manual above.
+
+========================================
+MOUSE AND KEYBOARD INPUT (From Manual)
+========================================
+
+== Section 6.13: Mouse and Keyboard Input ==
+
+Mouse coordinates are available via STAT(30) (mouse x), STAT(31) (mouse y) and STAT(32) (mouse button state).
+
+When the mouse is over the PICO-8 window, coordinates are reported relative to the top-left of the PICO-8 canvas (0,0 at top-left corner of canvas, 127,127 at bottom-right). When the mouse is not over the window, the last known position is reported. When the mouse is first moved over the window, coordinates are clamped to the canvas area.
+
+Use PEEK(0x5f18) to detect the state of the 3 mouse buttons, where bit 0 is left button, bit 1 is middle button, bit 2 is right button. The middle and right buttons are not available on all platforms.
+
+The mouse wheel is available via STAT(34), and increments when the wheel is scrolled up (positive values) or down (negative values). STAT(34) is reset to 0 after it is read.
+
+Keyboard state can be read via STAT(34)..STAT(39) or via PEEK(0x5f5c)..PEEK(0x5f61) after calling the keyboard() function.
+
+Keyboard key codes:
+  0x00..0x07: left, right, up, down, o, z, shift, ctrl
+  0x08..0x1f: backspace, enter, escape, tab, space
+  0x20..0x2f: 0..9
+  0x30..0x39: 0..9 (unshifted)
+  0x41..0x5a: A..Z
+
+KEYBOARD() should be called once per frame to update the keyboard state.
+
+Note that keyboard input can not be used in web builds due to browser limitations.
+
+STAT(30) = mouse x
+STAT(31) = mouse y
+STAT(32) = mouse button state (0=none, 1=left, 2=right, 4=middle)
+STAT(33) = mouse wheel
+STAT(34) = character value (keyboard)
+STAT(35) = key modifier flags
+STAT(36-39) = reserved
